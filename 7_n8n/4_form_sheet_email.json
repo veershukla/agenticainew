@@ -1,0 +1,187 @@
+{
+  "name": "4_form_sheet_email",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Customer Support",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "First Name",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Last Name",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Email",
+              "fieldType": "email",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Issue/Concern"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.3,
+      "position": [
+        0,
+        0
+      ],
+      "id": "027e3196-5d4a-45db-b63b-68410034c135",
+      "name": "On form submission",
+      "webhookId": "04c0ab02-f794-4c51-a4d2-16f58d52224e"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1f-xUG70kI6t1Sj7jgErw3wt61N3d6Q2f3cxxzQ41rRg",
+          "mode": "list",
+          "cachedResultName": "customer_service",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1f-xUG70kI6t1Sj7jgErw3wt61N3d6Q2f3cxxzQ41rRg/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1f-xUG70kI6t1Sj7jgErw3wt61N3d6Q2f3cxxzQ41rRg/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "First Name": "={{ $json['First Name'] }}",
+            "Last Name": "={{ $json['Last Name'] }}",
+            "Email": "={{ $json.Email }}",
+            "Issue/Complaint": "={{ $json['Issue/Concern'] }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "First Name",
+              "displayName": "First Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Last Name",
+              "displayName": "Last Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Issue/Complaint",
+              "displayName": "Issue/Complaint",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        208,
+        0
+      ],
+      "id": "84ac19eb-3bbd-4e40-81f5-70aef19da8c7",
+      "name": "Append row in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "tnu4C74m1pQ9yfUz",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.Email }}",
+        "subject": "Acknowledging your message",
+        "message": "=Dear  {{ $json['First Name'] }}  {{ $json['Last Name'] }},\n\nThis is to acknowledge your message to us. Please be assured that we will look into the issue/complaint and revert to you.\n\nThanks.",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        416,
+        0
+      ],
+      "id": "5709ac8c-0f56-44e6-8fc9-944c3013fcf4",
+      "name": "Send a message",
+      "webhookId": "c1c0f341-1a5d-48f7-a9bb-8b00899b7757",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "H8Obwo0uYeZNbz8o",
+          "name": "Gmail account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "On form submission": {
+      "main": [
+        [
+          {
+            "node": "Append row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append row in sheet": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "36762976-59dd-442b-b813-fbd154c7aced",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "4d97cb4244f898240be0381c2d99a8a906571e0ad124280c5b7d9b13601de668"
+  },
+  "id": "3S5cwjX4RGzyt8GY",
+  "tags": []
+}

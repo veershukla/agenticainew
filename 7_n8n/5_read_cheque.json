@@ -1,0 +1,301 @@
+{
+  "name": "5_read_cheque",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "triggerOn": "specificFolder",
+        "folderToWatch": {
+          "__rl": true,
+          "value": "1zuOscSxUcIXAO7vjtc356DveJB6WgzdA",
+          "mode": "list",
+          "cachedResultName": "n8ndemo",
+          "cachedResultUrl": "https://drive.google.com/drive/folders/1zuOscSxUcIXAO7vjtc356DveJB6WgzdA"
+        },
+        "event": "fileCreated",
+        "options": {
+          "fileType": "all"
+        }
+      },
+      "type": "n8n-nodes-base.googleDriveTrigger",
+      "typeVersion": 1,
+      "position": [
+        -464,
+        0
+      ],
+      "id": "a7f21b38-11a0-4def-a6bc-39725e9d0a97",
+      "name": "Google Drive Trigger",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "i2DpYqmEoEOuvi0g",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $json.id }}",
+          "mode": "id"
+        },
+        "options": {
+          "binaryPropertyName": "data"
+        }
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -256,
+        0
+      ],
+      "id": "ee1a5b3f-ba90-4156-9b58-bf61741a32e7",
+      "name": "Download file",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "i2DpYqmEoEOuvi0g",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "operation": "analyze",
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-flash-lite-latest",
+          "mode": "list",
+          "cachedResultName": "models/gemini-flash-lite-latest"
+        },
+        "text": "Extract payer, payee, amount, bank, date details from this cheque. Give output exactly in this format:\n\nPayer name: Actual payer name\nPayee name: Actual payee name\nDate: yyyy-mm-dd format\nAmount: Numeric value only\nBank: Actual bank name\n\nDo not add any other text/formatting",
+        "inputType": "binary",
+        "simplify": false,
+        "options": {
+          "maxOutputTokens": 300
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        -48,
+        0
+      ],
+      "id": "435810ef-e94c-4758-b800-e0bd26e76278",
+      "name": "Analyze an image",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "5mNRK7Tw1NFnyugQ",
+          "name": "Google Gemini(PaLM) Api account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// -------------------------------------------\n// 1. READ TEXT FROM YOUR JSON STRUCTURE\n// -------------------------------------------\nconst text =\n  item.json?.candidates?.[0]?.content?.parts?.[0]?.text || \"\";\n\n// -------------------------------------------\n// 2. SPLIT INTO LINES\n// -------------------------------------------\nconst lines = text.split(\"\\n\");\n\nfunction getValue(label) {\n  const line = lines.find(\n    l => l.toLowerCase().startsWith(label.toLowerCase())\n  );\n  if (!line) return \"\";\n  return line.split(\":\")[1].trim();\n}\n\n// -------------------------------------------\n// 3. EXTRACT FIELDS\n// -------------------------------------------\nconst payer = getValue(\"Payer name\");\nconst payee = getValue(\"Payee name\");\n\n// Amount\nlet amountRaw = getValue(\"Amount\");\nlet amount = null;\nif (amountRaw) {\n  amount = parseFloat(amountRaw.replace(/,/g, \"\").trim());\n}\n\n// -------------------------------------------\n// 4. DATE FORMAT FIX\n// -------------------------------------------\nfunction formatDate(d) {\n  if (!d) return null;\n\n  // Already ISO YYYY-MM-DD\n  if (/^\\d{4}-\\d{2}-\\d{2}$/.test(d)) return d;\n\n  // DD/MM/YYYY or DD-MM-YYYY\n  const m = d.match(/(\\d{1,2})[\\/-](\\d{1,2})[\\/-](\\d{4})/);\n  if (m) {\n    const [_, dd, mm, yy] = m;\n    return `${yy}-${mm.padStart(2, \"0\")}-${dd.padStart(2, \"0\")}`;\n  }\n\n  return null;\n}\n\nconst cheque_date = formatDate(getValue(\"Date\"));\nconst bank = getValue(\"Bank\");\n\n// -------------------------------------------\n// 5. RETURN CLEAN JSON (ALL FIELDS AT TOP LEVEL)\n// -------------------------------------------\nreturn {\n  json: {\n    payer,\n    payee,\n    amount,\n    bank,\n    cheque_date,   // date at top level\n    raw: text\n  }\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        160,
+        0
+      ],
+      "id": "25da4057-cbca-4c14-b4c4-aef3cf134ee4",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "base": {
+          "__rl": true,
+          "value": "appaUwpqsxmZmIkBC",
+          "mode": "list",
+          "cachedResultName": "cheques_data",
+          "cachedResultUrl": "https://airtable.com/appaUwpqsxmZmIkBC"
+        },
+        "table": {
+          "__rl": true,
+          "value": "tblqOQGX4vB4duUAy",
+          "mode": "list",
+          "cachedResultName": "cheque",
+          "cachedResultUrl": "https://airtable.com/appaUwpqsxmZmIkBC/tblqOQGX4vB4duUAy"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {
+            "amount": "={{ $json.amount }}",
+            "payer": "={{ $json.payer }}",
+            "payee": "={{ $json.payee }}",
+            "bank": "={{ $json.bank }}",
+            "cheque_date": "={{ $json.fields.cheque_date }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": true,
+              "removed": true
+            },
+            {
+              "id": "payer",
+              "displayName": "payer",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "payee",
+              "displayName": "payee",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "cheque_date",
+              "displayName": "cheque_date",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "dateTime",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "amount",
+              "displayName": "amount",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "raw",
+              "displayName": "raw",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "bank",
+              "displayName": "bank",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "typecast": true
+        }
+      },
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        368,
+        0
+      ],
+      "id": "517fafd4-1207-4bbf-901c-6be42b1d8c1d",
+      "name": "Create a record",
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "6ENi8nXZ738X2nCq",
+          "name": "Airtable Personal Access Token account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Google Drive Trigger": {
+      "main": [
+        [
+          {
+            "node": "Download file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download file": {
+      "main": [
+        [
+          {
+            "node": "Analyze an image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze an image": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Create a record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "8c61f7bc-10a9-4bec-b775-a83c84163f06",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "4d97cb4244f898240be0381c2d99a8a906571e0ad124280c5b7d9b13601de668"
+  },
+  "id": "ieDCvGpZyCQOlkmm",
+  "tags": []
+}
