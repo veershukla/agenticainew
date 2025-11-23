@@ -14,44 +14,99 @@ from langchain_anthropic import ChatAnthropic
 # ---- Load environment variables ----
 load_dotenv()
 
-# ---- Blocked words guardrail ----
+# ------------------------------------------------------------
+# SIMPLE GUARDRAILS
+# ------------------------------------------------------------
+
+# 1) Blocked words guardrail
 BLOCKED_WORDS = ['hack', 'exploit', 'illegal', 'bomb', 'violence', 'malware', 'virus']
 
 def has_blocked_words(text):
-    """Check if text contains blocked words"""
     text_lower = text.lower()
     for word in BLOCKED_WORDS:
         if word in text_lower:
-            return True, word
+            return True, f"Blocked word detected: {word}"
     return False, None
 
 
-# ---- Setup Vector DB ----
+# 2) Max length guardrail
+MAX_LENGTH = 120
+
+def exceeds_length(text):
+    if len(text) > MAX_LENGTH:
+        return True, "Query too long. Please keep it brief."
+    return False, None
+
+
+# 3) Allow-list topics guardrail (simple check)
+ALLOWED_TOPICS = ["phone", "iphone", "laptop", "product", "review", "camera", "tablet"]
+
+def is_not_allowed_topic(text):
+    text_lower = text.lower()
+    if not any(word in text_lower for word in ALLOWED_TOPICS):
+        return True, "Query not related to allowed topics (e.g. phones, laptops, products)."
+    return False, None
+
+
+# 4) Basic personal data guardrail (no regex, simple checks)
+def contains_personal_info(text):
+    if "@" in text and "." in text:
+        return True, "Detected possible email address. Personal info not allowed."
+    if any(char.isdigit() for char in text) and len(text) > 10:
+        return True, "Detected possible phone/ID number. Not allowed."
+    return False, None
+
+
+# ------------------------------------------------------------
+# Setup Vector DB
+# ------------------------------------------------------------
 embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
-# Load Chroma (persistent vector store)
 vectordb = Chroma(
-    persist_directory="c:/code/agenticai/3_langgraph/product_embeddings_chroma",
+    persist_directory="c://code//agenticai//3_langgraph//chromadb",
     embedding_function=embeddings,
+    collection_name="products_collection"
 )
 
-# ---- Setup LLM ----
+# ------------------------------------------------------------
+# Setup LLM
+# ------------------------------------------------------------
 llm = ChatAnthropic(
     model="claude-sonnet-4-5-20250929",
     anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
     streaming=True,
 )
 
-
-# ---- Tools ----
+# ------------------------------------------------------------
+# Tools
+# ------------------------------------------------------------
 def tool_search(query: str) -> str:
-    """Searches in Chroma DB using semantic similarity."""
-    results = vectordb.similarity_search(query, k=2)
-    return ", ".join([doc.metadata.get("title", "Untitled") for doc in results]) or "No results found."
+    """
+    Uses Chroma similarity_search_with_score() which returns cosine distance.
+    Converts to cosine similarity using: similarity = 1 - distance.
+    """
+    results = vectordb.similarity_search_with_score(query, k=2)
+
+    if not results:
+        return "No results found."
+
+    output_lines = []
+    for doc, distance in results:
+        title = doc.metadata.get("title", "Untitled")
+        cosine_distance = distance
+        cosine_similarity = 1 - distance  # convert
+
+        output_lines.append(
+            f"{title} "
+            f"(Cosine Distance: {cosine_distance:.4f}, "
+            f"Cosine Similarity: {cosine_similarity:.4f})"
+        )
+
+    return "\n".join(output_lines)
+
 
 
 def tool_serp(query: str) -> str:
-    """Performs online search using SerpAPI."""
     url = "https://serpapi.com/search"
     params = {"q": query, "api_key": os.getenv("SERPAPI_API_KEY"), "num": 2}
     try:
@@ -63,7 +118,6 @@ def tool_serp(query: str) -> str:
 
 
 def tool_ntfy(message: str) -> str:
-    """Sends a short notification via ntfy.sh."""
     ntfy_topic = os.getenv("NTFY_TOPIC")
     ntfy_url = f"https://ntfy.sh/{ntfy_topic}"
     try:
@@ -73,15 +127,18 @@ def tool_ntfy(message: str) -> str:
     except requests.exceptions.RequestException as e:
         return f"Failed to send notification: {e}"
 
-
-# ---- Agent Logic ----
+# ------------------------------------------------------------
+# Agent Logic with new guardrails
+# ------------------------------------------------------------
 def react_agent(query: str):
-    """ReAct-style reasoning loop."""
-    blocked, word = has_blocked_words(query)
-    if blocked:
-        yield f"Cannot process queries containing '{word}'", f"Blocked word: {word}"
-        return
-    
+
+    # Run all simple guardrails
+    for check in [has_blocked_words, exceeds_length, is_not_allowed_topic, contains_personal_info]:
+        blocked, reason = check(query)
+        if blocked:
+            yield f"Cannot process query: {reason}", reason
+            return
+
     state = {"query": query, "history": [f"User: {query}"], "final": ""}
 
     while True:
@@ -97,17 +154,11 @@ Action: (exactly one of the following)
 - Finalize[some final answer]
 
 You should use the Ntfy tool to send a notification whenever the user asks 
-about the 'latest iPhone' or related queries like 'new iPhone', 'iPhone 16', etc. 
-The message for the notification should be concise and directly related to the user's query, 
-for example, "User inquired about latest iPhone." 
-After sending the notification, continue to answer the user's question.
+about the 'latest iPhone' or related queries. After sending the notification,
+continue to answer normally.
 
 Do NOT output anything else. 
 Do NOT answer directly unless using Finalize[].
-
-Example:
-Thought: I should look up reviews for the product.
-Action: SerpSearch[best headphones reviews]
 
 Conversation so far:
 {chr(10).join(state['history'])}
@@ -124,14 +175,13 @@ Now continue.
         response = response.strip()
         state["history"].append(response)
 
-        # Parse model action
+        # Parse action
         action_match = re.search(r"Action\s*:\s*(\w+)\s*\[(.*)\]", response)
         if not action_match:
-            break  # stop if Claude does not follow format
+            break
 
         action, arg = action_match.group(1).lower(), action_match.group(2).strip()
 
-        # Execute the appropriate action
         if action == "search":
             obs = tool_search(arg)
             state["history"].append(f"Observation: {obs}")
@@ -152,7 +202,9 @@ Now continue.
         yield None, "\n".join(state["history"])
 
 
-# ---- Gradio UI ----
+# ------------------------------------------------------------
+# Gradio UI
+# ------------------------------------------------------------
 with gr.Blocks() as demo:
     gr.Markdown("# ReAct Agent with Guardrails + Chroma + ntfy + SerpAPI")
 
@@ -163,13 +215,13 @@ with gr.Blocks() as demo:
         chat_history.append(("User: " + user_input, ""))
 
         for final, trace in react_agent(user_input):
-            if final:  # final answer
+            if final:
                 chat_history[-1] = (
                     chat_history[-1][0],
                     f"**Final Answer:** {final}\n\n---\n**Trace:**\n{trace}"
                 )
                 yield chat_history
-            else:  # intermediate progress
+            else:
                 chat_history[-1] = (
                     chat_history[-1][0],
                     f"Working...\n\n**Trace so far:**\n{trace}"

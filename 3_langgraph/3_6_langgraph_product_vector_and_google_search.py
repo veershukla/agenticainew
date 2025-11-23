@@ -1,4 +1,4 @@
-# pip install langchain-google-genai langchain-huggingface langgraph chromadb requests gradio
+# pip install langchain-openai langchain-community langchain-huggingface langgraph chromadb requests gradio
 import os
 import gradio as gr
 import requests
@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from langgraph.graph import StateGraph, END
 from langchain_community.vectorstores import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
 
 load_dotenv()
 
@@ -22,23 +22,39 @@ class State(TypedDict):
 embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
 vectordb = Chroma(
-    persist_directory="c://code//agenticai//3_langgraph//product_embeddings_chroma",
+    persist_directory="c://code//agenticai//3_langgraph//chromadb",
     embedding_function=embeddings,
+    collection_name="products_collection"
 )
 
-llm = ChatGoogleGenerativeAI(
-    model="gemini-2.5-flash",
-    google_api_key=os.getenv("GOOGLE_API_KEY")
+llm = ChatOpenAI(
+    model="gpt-4o-mini",  # or gpt-4.1, gpt-4o, gpt-4o-mini
+    api_key=os.getenv("OPENAI_API_KEY"),
+    temperature=0.2
 )
 
 # Step 3: Define graph nodes
 def vector_search(state: State) -> State:
-    """Search for similar products in Chroma vector database"""
-    results = vectordb.similarity_search(state["query"], k=2)
+    """Search for similar products in Chroma vector database using cosine distance."""
+    results = vectordb.similarity_search_with_score(state["query"], k=2)
+
     if not results:
         state["vector"] = "No matching products found."
         return state
-    state["vector"] = "\n".join([doc.metadata.get("title", "Unknown product") for doc in results])
+
+    output = []
+    for doc, distance in results:
+        title = doc.metadata.get("title", "Unknown product")
+
+        cosine_similarity = 1 - distance
+
+        output.append(
+            f"{title}\n"
+            f"  • Cosine Distance: {distance:.4f}\n"
+            f"  • Cosine Similarity: {cosine_similarity:.4f}"
+        )
+
+    state["vector"] = "\n\n".join(output)
     return state
 
 
@@ -52,22 +68,29 @@ def serp_search(state: State) -> State:
     }
     data = requests.get(url, params=params).json()
     organic = data.get("organic_results", [])
+
     if not organic:
         state["serp"] = "No web results found."
         return state
-    results = [f"{r.get('title', 'No title')}: {r.get('snippet', '')}" for r in organic[:2]]
+
+    results = [
+        f"{r.get('title', 'No title')}: {r.get('snippet', '')}"
+        for r in organic[:2]
+    ]
     state["serp"] = "\n".join(results)
     return state
 
 
 def llm_analyze(state: State) -> State:
-    """Combine results and get AI-generated analysis"""
+    """Combine results and get AI-generated analysis using OpenAI"""
     prompt = (
-        f"Analyze the following query:\n\n"
-        f"Query: {state['query']}\n\n"
+        f"Analyze the following product search:\n\n"
+        f"Query:\n{state['query']}\n\n"
         f"Vector DB Results:\n{state['vector']}\n\n"
-        f"Web Results:\n{state['serp']}"
+        f"Web Results:\n{state['serp']}\n\n"
+        f"Give a user-friendly summary and recommendation."
     )
+
     response = llm.invoke(prompt)
     state["llm"] = response.content
     return state
@@ -96,9 +119,10 @@ def search(query, chat_history):
     chat_history.append({"role": "assistant", "content": answer})
     return chat_history
 
+
 demo = gr.ChatInterface(
     fn=search,
-    title="Product Search with LangGraph and Chroma",
+    title="Product Search with LangGraph and Chroma (OpenAI Version)",
     examples=["iPhone 15", "best budget laptop", "Samsung Galaxy S23 reviews"],
     type="messages"
 )

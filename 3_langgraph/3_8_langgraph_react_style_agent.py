@@ -16,11 +16,10 @@ load_dotenv()
 # Load HuggingFace embeddings
 embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
-# Load existing Chroma vector DB from disk
-# This assumes you’ve already stored product text data there.
 vectordb = Chroma(
-    persist_directory="c://code//agenticai//3_langgraph//product_embeddings_chroma",
+    persist_directory="c://code//agenticai//3_langgraph//chromadb",
     embedding_function=embeddings,
+    collection_name="products_collection"
 )
 
 # Initialize Anthropic Claude model
@@ -34,10 +33,30 @@ llm = ChatAnthropic(
 def tool_search(query: str) -> str:
     """
     Uses the Chroma vector DB to find the two most semantically similar documents
-    to the user's query. Returns the titles of those documents.
+    to the user's query. Returns the titles of those documents along with
+    cosine distance and cosine similarity.
     """
-    results = vectordb.similarity_search(query, k=2)
-    return ", ".join([doc.metadata.get("title", "Untitled") for doc in results]) or "No results found."
+    # Use Chroma's similarity search with metadata including distance
+    results = vectordb.similarity_search_with_score(query, k=2)
+
+    if not results:
+        return "No results found."
+
+    output_lines = []
+    for doc, distance in results:
+        title = doc.metadata.get("title", "Untitled")
+
+        cosine_distance = distance
+        cosine_similarity = 1 - distance  # Convert to similarity
+
+        output_lines.append(
+            f"{title} "
+            f"(Cosine Distance: {cosine_distance:.4f}, "
+            f"Cosine Similarity: {cosine_similarity:.4f})"
+        )
+
+    return "\n".join(output_lines)
+
 
 # ---- TOOL 2: SerpAPI Web Search ----
 def tool_serp(query: str) -> str:

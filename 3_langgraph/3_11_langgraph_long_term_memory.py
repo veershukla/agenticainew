@@ -19,7 +19,7 @@ class ProductState(TypedDict):
 # ----------------------------
 # SQLite Memory Setup
 # ----------------------------
-conn = sqlite3.connect('memory.db', check_same_thread=False)
+conn = sqlite3.connect(r'c:/code/agenticai/3_langgraph/memory.db', check_same_thread=False)
 cursor = conn.cursor()
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS memory (
@@ -54,10 +54,10 @@ def save_memory(query: str, results: str):
 # ----------------------------
 embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
-# Load existing Chroma collection or create one
 vectordb = Chroma(
-    persist_directory="c://code//agenticai//3_langgraph//product_embeddings_chroma",
-    embedding_function=embeddings
+    persist_directory="c://code//agenticai//3_langgraph//chromadb",
+    embedding_function=embeddings,
+    collection_name="products_collection"
 )
 
 

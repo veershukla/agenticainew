@@ -39,7 +39,7 @@ if __name__ == "__main__":
     print("Starting conversation...")    
     final = app.invoke({"name": "", "greeting": ""})    
     print("Final State:", final)
-    print("\Conversation complete!")
+    print("Conversation complete!")
     
     # --- Draw and save the graph image ---
     print("Generating graph image...")

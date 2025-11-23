@@ -33,6 +33,7 @@ if __name__ == "__main__":
     dot.node("B", "Greet User")
     dot.edge("A", "B")
 
-    graph_path = "c://code//agenticai//greeting_lcel_graph.png"
+'''    graph_path = "c://code//agenticai//greeting_lcel_graph.png"
     dot.render(graph_path, format="png", cleanup=True)
     print(f"Graph image saved at: {graph_path}")
+'''

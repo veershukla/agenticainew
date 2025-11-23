@@ -5,7 +5,8 @@ from langgraph.graph import StateGraph, END
 from typing import TypedDict
 import pandas as pd
 import gradio as gr
-import os
+import chromadb
+from chromadb.config import Settings
 
 # --- Step 1: Define state ---
 class ProductState(TypedDict):
@@ -22,16 +23,11 @@ metadatas = df.to_dict(orient="records")
 
 embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
-# --- Step 3: Setup Chroma vector store ---
+# --- Step 3: Setup Chroma (using L2 distance) ---
 persist_dir = "c://code//agenticai//3_langgraph//chromadb"
 collection_name = "products_collection"
 
-# Import chromadb client to check existing collections
-import chromadb
-from chromadb.config import Settings
-
 client = chromadb.PersistentClient(path=persist_dir, settings=Settings())
-
 existing_collections = [col.name for col in client.list_collections()]
 
 if collection_name in existing_collections:
@@ -54,34 +50,46 @@ else:
 
 # --- Step 4: Define LangGraph nodes ---
 def search_products(state: ProductState) -> ProductState:
-    results = vectordb.similarity_search(state["query"], k=3)
-    titles = [doc.metadata.get("title", "Unknown Product") for doc in results]
-    state["results"] = "\n".join([f"• {title}" for title in titles])
+    # Using cosine distance from Chroma (0 = identical)
+    results = vectordb.similarity_search_with_score(state["query"], k=3)
+
+    if not results:
+        state["results"] = "No products found"
+        return state
+
+    output = []
+    for i, (doc, distance) in enumerate(results, 1):
+        title = doc.metadata.get("title", "Unknown Product")
+
+        # Convert cosine distance -> cosine similarity
+        cosine_similarity = 1 - distance
+
+        output.append(
+            f"{i}. {title} "
+            f"(Cosine Distance: {distance:.4f}, "
+            f"Cosine Similarity: {cosine_similarity:.4f})"
+        )
+
+    state["results"] = "\n".join(output)
     return state
 
-def format_response(state: ProductState) -> ProductState:
-    state["results"] = f"Found products:\n{state['results']}" if state["results"] else "No products found."
-    return state
 
+
+# --- Step 5: Build LangGraph (simplified - removed format node) ---
 graph = StateGraph(ProductState)
 graph.add_node("search", search_products)
-graph.add_node("format", format_response)
 graph.set_entry_point("search")
-graph.add_edge("search", "format")
-graph.add_edge("format", END)
+graph.add_edge("search", END)
 runnable = graph.compile()
 
-# --- Step 5: Gradio handlers ---
-def search(query):
-    return runnable.invoke({"query": query})["results"]
-
+# --- Step 6: Gradio handlers ---
 def chat_fn(message, history):
-    return search(message)
+    return runnable.invoke({"query": message})["results"]
 
-# --- Step 6: Gradio UI ---
+# --- Step 7: Gradio UI ---
 demo = gr.ChatInterface(
     fn=chat_fn,
-    title="Product Search (Chroma + HuggingFace)",
+    title="Product Search (L2 Distance)",
     examples=["wireless headphones", "gaming laptop", "DSLR camera"],
 )
 

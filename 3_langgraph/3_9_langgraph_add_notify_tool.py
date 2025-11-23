@@ -20,169 +20,166 @@ from langchain_anthropic import ChatAnthropic
 load_dotenv()
 
 # ---- SETUP ----
-# Load embedding model
 embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
-# Initialize Chroma vector store (persistent on disk)
 vectordb = Chroma(
-    persist_directory="c://code//agenticai//3_langgraph//product_embeddings_chroma",
+    persist_directory="c://code//agenticai//3_langgraph//chromadb",
     embedding_function=embeddings,
+    collection_name="products_collection"
 )
 
-# Initialize Claude model
 llm = ChatAnthropic(
     model="claude-sonnet-4-5-20250929",
     anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
-    streaming=True,
+    temperature=0
 )
 
 # ---- TOOLS ----
 
 def tool_search(query: str) -> str:
-    """
-    Searches local Chroma DB for semantically similar entries.
-    """
-    results = vectordb.similarity_search(query, k=2)
-    return ", ".join([doc.metadata.get("title", "Untitled") for doc in results]) or "No results found."
+    """Searches local Chroma DB using cosine similarity (clean output)."""
+    results = vectordb.similarity_search_with_score(query, k=2)
+    if not results:
+        return "No results found"
+    
+    output = []
+    for doc, distance in results:
+        title = doc.metadata.get("title", "Untitled")
+        cosine_similarity = 1 - distance
+        # Clamp between -1 and 1
+        if cosine_similarity > 1:
+            cosine_similarity = 1
+        if cosine_similarity < -1:
+            cosine_similarity = -1
+        output.append(f"{title} similarity {cosine_similarity:.4f}")
+    return "\n".join(output)
 
 
 def tool_serp(query: str) -> str:
-    """
-    Performs web search using SerpAPI.
-    """
+    """Performs web search using SerpAPI (clean output)."""
     url = "https://serpapi.com/search"
-    params = {"q": query, "api_key": os.getenv("SERPAPI_KEY"), "num": 2}
+    params = {"q": query, "api_key": os.getenv("SERPAPI_API_KEY"), "num": 2}
     try:
-        data = requests.get(url, params=params).json()
-        results = [f"{r['title']}: {r['snippet']}" for r in data.get("organic_results", [])[:2]]
-        return "\n".join(results) if results else "No SERP results found."
+        data = requests.get(url, params=params, timeout=10).json()
+        organic = data.get("organic_results", [])
+        if not organic:
+            return "No SERP results found"
+        results = [f"{r.get('title', '')} {r.get('snippet', '')}" for r in organic[:2]]
+        return "\n".join(results)
     except Exception as e:
         return f"SerpAPI error: {e}"
 
 
 def tool_ntfy(message: str) -> str:
-    """
-    Sends a notification via ntfy.sh.
-    """
+    """Sends a notification via ntfy.sh."""
     ntfy_topic = os.getenv("NTFY_TOPIC")
-    # NTFY_TOPIC="atulkahate_urgent_tickets"
     ntfy_url = f"https://ntfy.sh/{ntfy_topic}"
     try:
         response = requests.post(ntfy_url, data=message, timeout=5)
         response.raise_for_status()
-        return "Notification sent successfully."
+        return "Notification sent successfully"
     except requests.exceptions.RequestException as e:
         return f"Failed to send notification: {e}"
 
 
 # ---- REACT AGENT ----
-def react_agent(query: str):
-    """
-    ReAct-style reasoning loop:
-      Thought: reasoning step
-      Action: choose Search / SerpSearch / Ntfy / Finalize
-      Observation: record results, continue reasoning
-    """
-    state = {"query": query, "history": [f"User: {query}"], "final": ""}
+def react_agent(query: str, max_iterations=5):
+    """ReAct-style reasoning loop with limited iterations."""
+    history = []
+    
+    for iteration in range(max_iterations):
+        history_text = "\n".join(history) if history else "No previous steps"
+        
+        prompt = f"""You are a ReAct agent. Follow this EXACT format:
 
-    while True:
-        # --- Prompt instructing Claude how to behave ---
-        prompt = f"""
-You are a ReAct-style agent. 
-You MUST always follow this exact output format:
+Thought: [your reasoning in one sentence]
+Action: [exactly one of: Search[query] | SerpSearch[query] | Ntfy[message] | Finalize[answer]]
 
-Thought: (one short sentence of reasoning)
-Action: (exactly one of the following)
-- Search[some query]
-- SerpSearch[some query]
-- Ntfy[some message]
-- Finalize[some final answer]
+Rules:
+- Use Search[] for product database queries
+- Use SerpSearch[] for web searches
+- Use Ntfy[] to send notifications for iPhone-related queries
+- Use Finalize[] ONLY when you have the complete answer
+- Output ONLY Thought and Action, nothing else
 
-You should use the Ntfy tool to send a notification whenever the user asks 
-about the 'latest iPhone' or similar queries like 'new iPhone', 'iPhone 16', etc. 
-The notification message should be concise and directly related to the user's query, 
-for example: "User inquired about latest iPhone." 
-After sending the notification, continue to answer the user's question.
+Previous steps:
+{history_text}
 
-Do NOT output anything else. 
-Do NOT answer directly unless using Finalize[].
+Original question: {query}
 
-Example:
-Thought: I should look up reviews for the product.
-Action: SerpSearch[best headphones reviews]
+Your next step:"""
 
-Conversation so far:
-{chr(10).join(state['history'])}
-
-User question: {state['query']}
-Now continue.
-"""
-
-        # --- Stream LLM output ---
-        response = ""
-        for chunk in llm.stream(prompt):
-            if chunk.content:
-                response += chunk.content
-        response = response.strip()
-        state["history"].append(response)
-
-        # Expected model output:
-        # Thought: I should search vector DB for relevant info.
-        # Action: Search[wireless earbuds]
-
-        # --- Parse the model's action ---
-        action_match = re.search(r"Action\s*:\s*(\w+)\s*\[(.*)\]", response)
+        try:
+            response = llm.invoke(prompt).content.strip()
+        except Exception as e:
+            return f"Error: {e}", history
+        
+        history.append(f"\nStep {iteration + 1}:\n{response}")
+        
+        action_match = re.search(r"Action\s*:\s*(\w+)\s*\[(.*?)\]", response, re.IGNORECASE | re.DOTALL)
         if not action_match:
-            break  # stop if Claude deviates from format
-
-        action, arg = action_match.group(1).lower(), action_match.group(2).strip()
-
-        # --- Execute selected action ---
-        if action == "search":
-            obs = tool_search(arg)
-            state["history"].append(f"Observation: {obs}")
-
-        elif action == "serpsearch":
-            obs = tool_serp(arg)
-            state["history"].append(f"Observation: {obs}")
-
-        elif action == "ntfy":
-            obs = tool_ntfy(arg)
-            state["history"].append(f"Observation: {obs}")
-
-        elif action == "finalize":
-            state["final"] = arg
-            yield state["final"], "\n".join(state["history"])
+            history.append("Error: Could not parse action. Stopping")
             break
-
-        yield None, "\n".join(state["history"])
+        
+        action = action_match.group(1).lower()
+        arg = action_match.group(2).strip()
+        
+        if action == "search":
+            observation = tool_search(arg)
+            history.append(f"Observation:\n{observation}")
+        elif action == "serpsearch":
+            observation = tool_serp(arg)
+            history.append(f"Observation:\n{observation}")
+        elif action == "ntfy":
+            observation = tool_ntfy(arg)
+            history.append(f"Observation:\n{observation}")
+        elif action == "finalize":
+            return arg, history
+        else:
+            history.append(f"Unknown action: {action}")
+            break
+    
+    history.append(f"Reached maximum iterations ({max_iterations})")
+    return "Could not complete the task within the iteration limit", history
 
 
 # ---- GRADIO UI ----
+def respond(user_input, chat_history):
+    if not user_input.strip():
+        return chat_history
+    
+    chat_history.append((user_input, "Processing..."))
+    yield chat_history
+    
+    final_answer, trace = react_agent(user_input)
+    
+    trace_text = "\n".join(trace)
+    full_response = f"Answer:\n{final_answer}\n\nTrace:\n{trace_text}"
+    
+    chat_history[-1] = (user_input, full_response)
+    yield chat_history
+
+
 with gr.Blocks() as demo:
-    gr.Markdown("# ReAct Agent with Claude + Chroma + SerpAPI + ntfy (Streaming)")
-
-    chatbot = gr.Chatbot(label="Agent Trace")
-    query = gr.Textbox(label="Ask something", placeholder="e.g. latest iphone news")
-
-    def respond(user_input, chat_history):
-        chat_history.append(("User: " + user_input, ""))
-
-        # Iterate through intermediate reasoning and final response
-        for final, trace in react_agent(user_input):
-            if final:
-                chat_history[-1] = (
-                    chat_history[-1][0],
-                    f"**Final Answer:** {final}\n\n---\n**Trace:**\n{trace}"
-                )
-                yield chat_history
-            else:
-                chat_history[-1] = (
-                    chat_history[-1][0],
-                    f"Working...\n\n**Trace so far:**\n{trace}"
-                )
-                yield chat_history
-
+    gr.Markdown("# ReAct Agent with Claude + Chroma + SerpAPI + ntfy")
+    gr.Markdown("Ask about products, search the web, or get notifications")
+    
+    chatbot = gr.Chatbot(label="Agent Conversation", height=500)
+    
+    with gr.Row():
+        query = gr.Textbox(label="Your Question", placeholder="e.g., 'latest iPhone news' or 'wireless headphones'", scale=4)
+        submit = gr.Button("Send", scale=1)
+    
+    gr.Examples(
+        examples=[
+            "Find wireless headphones",
+            "Latest iPhone news",
+            "Search for gaming laptops",
+        ],
+        inputs=query
+    )
+    
+    submit.click(respond, [query, chatbot], [chatbot])
     query.submit(respond, [query, chatbot], [chatbot])
 
 if __name__ == "__main__":
